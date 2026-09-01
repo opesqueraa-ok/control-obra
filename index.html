@@ -333,7 +333,6 @@ function renderHoy(){
           <div class="worker-name">
             ${worker.name}
             ${!l.present ? '<span class="badge absent">Ausente</span>' : ''}
-            ${l.present && !tookLunch ? '<span class="badge lunch">Sin almuerzo</span>' : ''}
             ${ot>0 ? `<span class="badge ot">+${ot}h extra</span>` : ''}
           </div>
           <div class="row">
