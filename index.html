@@ -86,6 +86,8 @@
   .name-input{border:none; background:transparent; font-weight:700; font-size:16px; padding:0; width:auto; flex:1;}
   .toggle{border:1px solid var(--line); border-radius:6px; padding:5px 8px; font-size:11.5px; cursor:pointer; background:#fff;}
   .toggle.on{background:var(--ink); color:#fff; border-color:var(--ink);}
+  .toggle.lunch-off{background:var(--safety); color:#fff; border-color:var(--safety);}
+  .badge.lunch{background:#FCEDCB; color:var(--new);}
   .act-item{
     display:flex; gap:8px; align-items:flex-start; padding:8px 0; border-bottom:1px solid var(--line);
   }
@@ -176,7 +178,7 @@ let state = {
   tab: 'hoy',
   date: todayISO(),
   workers: [],       // {id, name}
-  log: { workers:{}, activities:[] } // workers[id] = {present, isNew, entrada, salida, salidaReal}
+  log: { workers:{}, activities:[] } // workers[id] = {present, tookLunch, entrada, salida, salidaReal}
 };
 
 function toast(msg){
@@ -219,7 +221,7 @@ async function loadLog(date){
   // Si un trabajador se agregó después de esta fecha, no lo marcamos
   // presente por defecto: eso falsearía el historial de asistencia.
   state.workers.forEach(w=>{
-    if(!state.log.workers[w.id]) state.log.workers[w.id] = { present:false, isNew:false, entrada:'', salida:'', salidaReal:'' };
+    if(!state.log.workers[w.id]) state.log.workers[w.id] = { present:false, tookLunch:true, entrada:'', salida:'', salidaReal:'' };
   });
 }
 async function saveLog(){
@@ -246,7 +248,7 @@ async function computeWeekTotals(monday){
           if(l.present){
             pCount++;
             hSum += workedHours(l.entrada, l.salida);
-            eSum += overtimeHours(l.salida, l.salidaReal);
+            eSum += totalOvertime(l);
           }
         });
       }
@@ -264,12 +266,19 @@ async function saveWeekSummary(){
   }catch(e){ console.error(e); }
 }
 
+const LUNCH_HOURS = 1; // hora de almuerzo estándar; si no se toma, se suma como extra
+
 function overtimeHours(salida, real){
   if(!salida || !real) return 0;
   const [h1,m1] = salida.split(':').map(Number);
   const [h2,m2] = real.split(':').map(Number);
   const diff = (h2*60+m2) - (h1*60+m1);
   return diff > 0 ? +(diff/60).toFixed(2) : 0;
+}
+function totalOvertime(l){
+  const base = overtimeHours(l.salida, l.salidaReal);
+  const lunch = l.tookLunch === false ? LUNCH_HOURS : 0;
+  return +(base + lunch).toFixed(2);
 }
 function workedHours(entrada, salida){
   if(!entrada || !salida) return 0;
@@ -315,20 +324,20 @@ function renderHoy(){
   } else {
     html += `<div class="card"><h3>Asistencia y horas</h3>`;
     w.forEach(worker=>{
-      const l = state.log.workers[worker.id] || {present:true,isNew:false,entrada:'',salida:'',salidaReal:''};
-      const ot = overtimeHours(l.salida, l.salidaReal);
+      const l = state.log.workers[worker.id] || {present:true,tookLunch:true,entrada:'',salida:'',salidaReal:''};
+      const ot = totalOvertime(l);
       html += `
       <div class="worker ${l.present?'':'absent'}" data-id="${worker.id}">
         <div class="worker-top">
           <div class="worker-name">
             ${worker.name}
-            ${l.isNew ? '<span class="badge new">Nuevo</span>' : ''}
             ${!l.present ? '<span class="badge absent">Ausente</span>' : ''}
+            ${l.present && !l.tookLunch ? '<span class="badge lunch">Sin almuerzo</span>' : ''}
             ${ot>0 ? `<span class="badge ot">+${ot}h extra</span>` : ''}
           </div>
           <div class="row">
             <span class="toggle ${l.present?'on':''}" data-act="present">${l.present?'Presente':'Ausente'}</span>
-            <span class="toggle ${l.isNew?'on':''}" data-act="new">Nuevo</span>
+            <span class="toggle ${l.tookLunch?'':'lunch-off'}" data-act="lunch">${l.tookLunch?'Almorzó':'No almorzó'}</span>
           </div>
         </div>
         ${l.present ? `
@@ -391,7 +400,7 @@ function renderHoy(){
     card.querySelectorAll('.toggle').forEach(tg=>{
       tg.onclick = async ()=>{
         if(tg.dataset.act==='present'){ l.present = !l.present; if(!l.present){l.entrada='';l.salida='';l.salidaReal='';} }
-        if(tg.dataset.act==='new') l.isNew = !l.isNew;
+        if(tg.dataset.act==='lunch') l.tookLunch = !l.tookLunch;
         await saveLog(); renderHoy(); setHeaderSub();
       };
     });
@@ -402,7 +411,7 @@ function renderHoy(){
       inp.onchange = async ()=>{
         l[inp.dataset.f] = inp.value;
         await saveLog();
-        const ot = overtimeHours(l.salida, l.salidaReal);
+        const ot = totalOvertime(l);
         let otBadge = card.querySelector('.badge.ot');
         if(ot > 0){
           if(!otBadge){
@@ -468,7 +477,7 @@ function renderTrabajadores(){
     try{
       await addWorkerDoc(worker);
       state.workers.push(worker);
-      state.log.workers[id] = {present:true, isNew:true, entrada:'', salida:'', salidaReal:''};
+      state.log.workers[id] = {present:true, tookLunch:true, entrada:'', salida:'', salidaReal:''};
       await saveLog();
       renderTrabajadores(); setHeaderSub(); toast('Trabajador agregado');
     }catch(e){
@@ -708,12 +717,12 @@ function buildReportText(){
   if(state.workers.length===0) t += `_Sin personal registrado_\n`;
   state.workers.forEach(w=>{
     const l = state.log.workers[w.id] || {};
-    const ot = overtimeHours(l.salida, l.salidaReal);
+    const ot = totalOvertime(l);
     if(l.present){
       let line = `✅ ${w.name}`;
-      if(l.isNew) line += ` _(nuevo)_`;
       if(l.entrada || l.salida) line += ` — ${l.entrada||'--:--'} a ${l.salida||'--:--'}`;
-      if(ot>0) line += ` *(+${ot}h extra hasta ${l.salidaReal})*`;
+      if(!l.tookLunch) line += ` _(sin almuerzo)_`;
+      if(ot>0) line += ` *(+${ot}h extra)*`;
       t += line + `\n`;
     } else {
       t += `❌ ${w.name} — ausente\n`;
@@ -728,7 +737,7 @@ function buildReportText(){
 
   const totalOT = state.workers.reduce((s,w)=>{
     const l = state.log.workers[w.id]||{};
-    return s + overtimeHours(l.salida,l.salidaReal);
+    return s + totalOvertime(l);
   },0);
   t += `\n*Total horas extra del día:* ${totalOT.toFixed(2)}h`;
   return t;
