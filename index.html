@@ -325,6 +325,7 @@ function renderHoy(){
     html += `<div class="card"><h3>Asistencia y horas</h3>`;
     w.forEach(worker=>{
       const l = state.log.workers[worker.id] || {present:true,tookLunch:true,entrada:'',salida:'',salidaReal:''};
+      const tookLunch = l.tookLunch !== false; // sin dato guardado = sí almorzó
       const ot = totalOvertime(l);
       html += `
       <div class="worker ${l.present?'':'absent'}" data-id="${worker.id}">
@@ -332,12 +333,12 @@ function renderHoy(){
           <div class="worker-name">
             ${worker.name}
             ${!l.present ? '<span class="badge absent">Ausente</span>' : ''}
-            ${l.present && !l.tookLunch ? '<span class="badge lunch">Sin almuerzo</span>' : ''}
+            ${l.present && !tookLunch ? '<span class="badge lunch">Sin almuerzo</span>' : ''}
             ${ot>0 ? `<span class="badge ot">+${ot}h extra</span>` : ''}
           </div>
           <div class="row">
             <span class="toggle ${l.present?'on':''}" data-act="present">${l.present?'Presente':'Ausente'}</span>
-            <span class="toggle ${l.tookLunch?'':'lunch-off'}" data-act="lunch">${l.tookLunch?'Almorzó':'No almorzó'}</span>
+            <span class="toggle ${tookLunch?'':'lunch-off'}" data-act="lunch">${tookLunch?'Almorzó':'No almorzó'}</span>
           </div>
         </div>
         ${l.present ? `
@@ -400,7 +401,7 @@ function renderHoy(){
     card.querySelectorAll('.toggle').forEach(tg=>{
       tg.onclick = async ()=>{
         if(tg.dataset.act==='present'){ l.present = !l.present; if(!l.present){l.entrada='';l.salida='';l.salidaReal='';} }
-        if(tg.dataset.act==='lunch') l.tookLunch = !l.tookLunch;
+        if(tg.dataset.act==='lunch') l.tookLunch = (l.tookLunch === false); // alterna: false->true, true/undefined->false
         await saveLog(); renderHoy(); setHeaderSub();
       };
     });
@@ -721,7 +722,7 @@ function buildReportText(){
     if(l.present){
       let line = `✅ ${w.name}`;
       if(l.entrada || l.salida) line += ` — ${l.entrada||'--:--'} a ${l.salida||'--:--'}`;
-      if(!l.tookLunch) line += ` _(sin almuerzo)_`;
+      if(l.tookLunch === false) line += ` _(sin almuerzo)_`;
       if(ot>0) line += ` *(+${ot}h extra)*`;
       t += line + `\n`;
     } else {
