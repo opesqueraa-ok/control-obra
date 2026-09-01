@@ -35,6 +35,7 @@
     background:transparent; border:1px solid #555; color:#fff; border-radius:6px;
     padding:5px 8px; font-family:inherit; font-size:13px;
   }
+  header .btn.ghost{ background:transparent; color:#fff; border:1px solid #666; }
   .sub{font-size:12px; color:#B9B6AC; margin-top:4px;}
   main{padding:14px; max-width:760px; margin:0 auto;}
   .tabbar{
@@ -116,7 +117,11 @@
 <header>
   <div class="row">
     <h1>🏗️ Bitácora de Obra</h1>
-    <input type="date" id="datePicker">
+    <div class="row" style="gap:6px;">
+      <button class="btn ghost small" id="prevDay" style="padding:6px 10px;">◀</button>
+      <input type="date" id="datePicker">
+      <button class="btn ghost small" id="nextDay" style="padding:6px 10px;">▶</button>
+    </div>
   </div>
   <div class="sub" id="headerSub">Cargando...</div>
 </header>
@@ -387,7 +392,25 @@ function renderHoy(){
       };
     });
     card.querySelectorAll('input[type=time]').forEach(inp=>{
-      inp.onchange = async ()=>{ l[inp.dataset.f] = inp.value; await saveLog(); renderHoy(); };
+      // OJO: no llamamos renderHoy() aquí — reconstruir la tarjeta mientras
+      // el selector nativo de hora está abierto lo cierra de golpe en iOS.
+      // Solo guardamos y actualizamos el badge de horas extra en el lugar.
+      inp.onchange = async ()=>{
+        l[inp.dataset.f] = inp.value;
+        await saveLog();
+        const ot = overtimeHours(l.salida, l.salidaReal);
+        let otBadge = card.querySelector('.badge.ot');
+        if(ot > 0){
+          if(!otBadge){
+            otBadge = document.createElement('span');
+            otBadge.className = 'badge ot';
+            card.querySelector('.worker-name').appendChild(otBadge);
+          }
+          otBadge.textContent = `+${ot}h extra`;
+        } else if(otBadge){
+          otBadge.remove();
+        }
+      };
     });
   });
 
@@ -738,11 +761,20 @@ $$('.tabbar button').forEach(b=>{
     render();
   };
 });
-$('#datePicker').onchange = async (e)=>{
-  state.date = e.target.value;
+function shiftDate(days){
+  const d = new Date(state.date+'T00:00:00');
+  d.setDate(d.getDate()+days);
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+}
+async function goToDate(iso){
+  state.date = iso;
+  $('#datePicker').value = iso;
   await loadLog(state.date);
   render();
-};
+}
+$('#prevDay').onclick = ()=> goToDate(shiftDate(-1));
+$('#nextDay').onclick = ()=> goToDate(shiftDate(1));
+$('#datePicker').onchange = (e)=> goToDate(e.target.value);
 
 (async function init(){
   $('#datePicker').value = state.date;
