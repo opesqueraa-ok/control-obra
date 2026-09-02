@@ -178,7 +178,8 @@ let state = {
   tab: 'hoy',
   date: todayISO(),
   workers: [],       // {id, name}
-  log: { workers:{}, activities:[] } // workers[id] = {present, tookLunch, entrada, salida, salidaReal}
+  projects: [],      // {id, name}
+  log: { workers:{}, activities:[] } // workers[id] = {present, tookLunch, entrada, salida, salidaReal, projectId}
 };
 
 function toast(msg){
@@ -209,6 +210,27 @@ async function updateWorkerDoc(worker){
 async function deleteWorkerDoc(id){
   await deleteDoc(doc(db,'workers',id));
 }
+async function loadProjects(){
+  try{
+    const snap = await getDocs(collection(db,'projects'));
+    state.projects = snap.docs
+      .map(d=>({id:d.id, ...d.data()}))
+      .sort((a,b)=>(a.order||0)-(b.order||0));
+  }catch(e){
+    console.error(e);
+    toast('No se pudo cargar la lista de proyectos.');
+    state.projects = [];
+  }
+}
+async function addProjectDoc(project){
+  await setDoc(doc(db,'projects',project.id), { name: project.name, order: Date.now() });
+}
+async function updateProjectDoc(project){
+  await setDoc(doc(db,'projects',project.id), { name: project.name }, { merge:true });
+}
+async function deleteProjectDoc(id){
+  await deleteDoc(doc(db,'projects',id));
+}
 async function loadLog(date){
   try{
     const snap = await getDoc(doc(db,'logs',date));
@@ -221,7 +243,7 @@ async function loadLog(date){
   // Si un trabajador se agregó después de esta fecha, no lo marcamos
   // presente por defecto: eso falsearía el historial de asistencia.
   state.workers.forEach(w=>{
-    if(!state.log.workers[w.id]) state.log.workers[w.id] = { present:false, tookLunch:true, entrada:'', salida:'', salidaReal:'' };
+    if(!state.log.workers[w.id]) state.log.workers[w.id] = { present:false, tookLunch:true, entrada:'', salida:'', salidaReal:'', projectId:'' };
   });
 }
 async function saveLog(){
@@ -345,6 +367,13 @@ function renderHoy(){
           <div><label>Entrada</label><input type="time" data-f="entrada" value="${l.entrada}"></div>
           <div><label>Salida</label><input type="time" data-f="salida" value="${l.salida}"></div>
           <div><label>Salida real</label><input type="time" data-f="salidaReal" value="${l.salidaReal}"></div>
+        </div>
+        <div style="margin-top:6px;">
+          <label style="font-size:10.5px; color:var(--muted); display:block; margin-bottom:2px;">Proyecto</label>
+          <select data-f="projectId">
+            <option value="">Sin proyecto asignado</option>
+            ${state.projects.map(p=>`<option value="${p.id}" ${l.projectId===p.id?'selected':''}>${p.name}</option>`).join('')}
+          </select>
         </div>` : ''}
       </div>`;
     });
@@ -359,6 +388,10 @@ function renderHoy(){
         <option value="">General / supervisión</option>
         ${w.map(x=>`<option value="${x.id}">${x.name}</option>`).join('')}
       </select>
+      <select id="newActProject" style="width:auto; max-width:150px;">
+        <option value="">Sin proyecto</option>
+        ${state.projects.map(p=>`<option value="${p.id}">${p.name}</option>`).join('')}
+      </select>
     </div>
     <div class="row" style="margin-bottom:10px;">
       <input type="text" id="newActText" placeholder="¿Qué se está haciendo o supervisando?" style="flex:1; min-width:180px;">
@@ -368,7 +401,7 @@ function renderHoy(){
       ${state.log.activities.length ? state.log.activities.map((a,i)=>`
         <div class="act-item">
           <div class="act-time">${a.time}</div>
-          <div class="act-text">${a.text}${a.workerName?`<div class="act-worker">${a.workerName}</div>`:''}</div>
+          <div class="act-text">${a.text}${(a.workerName||a.projectName)?`<div class="act-worker">${[a.workerName,a.projectName].filter(Boolean).join(' · ')}</div>`:''}</div>
           <button class="del" data-i="${i}">✕</button>
         </div>`).join('') : '<p class="empty">Sin actividades registradas todavía.</p>'}
     </div>
@@ -425,6 +458,10 @@ function renderHoy(){
         }
       };
     });
+    card.querySelector('select[data-f="projectId"]')?.addEventListener('change', async (e)=>{
+      l.projectId = e.target.value;
+      await saveLog();
+    });
   });
 
   $('#addActBtn').onclick = async ()=>{
@@ -433,7 +470,9 @@ function renderHoy(){
     const time = $('#newActTime').value || nowHM();
     const wid = $('#newActWorker').value;
     const workerName = wid ? state.workers.find(x=>x.id===wid)?.name : '';
-    state.log.activities.push({time, text, workerId:wid||null, workerName});
+    const pid = $('#newActProject').value;
+    const projectName = pid ? state.projects.find(x=>x.id===pid)?.name : '';
+    state.log.activities.push({time, text, workerId:wid||null, workerName, projectId:pid||null, projectName});
     state.log.activities.sort((a,b)=>a.time.localeCompare(b.time));
     await saveLog(); renderHoy(); toast('Actividad agregada');
   };
@@ -448,6 +487,21 @@ function renderHoy(){
 /* ---------------- RENDER: TRABAJADORES ---------------- */
 function renderTrabajadores(){
   let html = `
+  <div class="card">
+    <h3>Proyectos</h3>
+    <div class="row" style="margin-bottom:10px;">
+      <input type="text" id="newProjectName" placeholder="Nombre del proyecto (ej. ALTEZZA)" style="flex:1; min-width:160px;">
+      <button class="btn secondary" id="addProjectBtn">Agregar</button>
+    </div>
+    ${state.projects.length===0 ? '<p class="empty">Aún no hay proyectos. Sin proyectos, la app funciona igual, solo que sin ese filtro.</p>' : ''}
+    ${state.projects.map(p=>`
+      <div class="worker">
+        <div class="worker-top">
+          <input class="name-input" data-pid="${p.id}" value="${p.name}">
+          <button class="del" data-delp="${p.id}">✕</button>
+        </div>
+      </div>`).join('')}
+  </div>
   <div class="card">
     <h3>Agregar trabajador</h3>
     <div class="row">
@@ -469,6 +523,46 @@ function renderTrabajadores(){
   html += `</div>`;
   $('#app').innerHTML = html;
 
+  $('#addProjectBtn').onclick = async ()=>{
+    const name = $('#newProjectName').value.trim();
+    if(!name){ toast('Escribe un nombre de proyecto'); return; }
+    const id = uid();
+    try{
+      await addProjectDoc({id, name});
+      state.projects.push({id, name});
+      renderTrabajadores(); toast('Proyecto agregado');
+    }catch(e){
+      console.error(e);
+      toast('No se pudo guardar el proyecto. Revisa la configuración.');
+    }
+  };
+  $$('[data-pid]').forEach(inp=>{
+    inp.onchange = async ()=>{
+      const p = state.projects.find(x=>x.id===inp.dataset.pid);
+      const newName = inp.value.trim() || p.name;
+      try{
+        await updateProjectDoc({id:p.id, name:newName});
+        p.name = newName;
+        toast('Proyecto actualizado');
+      }catch(e){
+        console.error(e);
+        toast('No se pudo actualizar el proyecto.');
+      }
+    };
+  });
+  $$('[data-delp]').forEach(b=>{
+    b.onclick = async ()=>{
+      if(!confirm('¿Eliminar este proyecto? Los días ya guardados conservarán el nombre pero perderán el enlace al proyecto.')) return;
+      try{
+        await deleteProjectDoc(b.dataset.delp);
+        state.projects = state.projects.filter(x=>x.id!==b.dataset.delp);
+        renderTrabajadores();
+      }catch(e){
+        console.error(e);
+        toast('No se pudo eliminar el proyecto.');
+      }
+    };
+  });
   $('#addWorkerBtn').onclick = async ()=>{
     const name = $('#newWorkerName').value.trim();
     if(!name){ toast('Escribe un nombre'); return; }
@@ -485,7 +579,7 @@ function renderTrabajadores(){
       toast('No se pudo guardar en Firebase. Revisa la configuración.');
     }
   };
-  $$('.name-input').forEach(inp=>{
+  $$('.name-input[data-id]').forEach(inp=>{
     inp.onchange = async ()=>{
       const w = state.workers.find(x=>x.id===inp.dataset.id);
       const newName = inp.value.trim() || w.name;
@@ -678,6 +772,7 @@ Responde SOLO con JSON, sin texto adicional, sin backticks, con este formato exa
       const raw = data.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim();
       const parsed = JSON.parse(raw);
       const matchedWorker = state.workers.find(w=>w.name===parsed.trabajador);
+      const suggestedProject = matchedWorker ? state.log.workers[matchedWorker.id]?.projectId : '';
       $('#extractResult').innerHTML = `
         <div class="card" style="background:#FAFAF7; margin-top:10px;">
           <div class="field"><label>Actividad</label><input type="text" id="exActividad" value="${(parsed.actividad||'').replace(/"/g,'&quot;')}"></div>
@@ -690,12 +785,20 @@ Responde SOLO con JSON, sin texto adicional, sin backticks, con este formato exa
               </select>
             </div>
           </div>
+          <div class="field"><label>Proyecto</label>
+            <select id="exProject">
+              <option value="">Sin proyecto</option>
+              ${state.projects.map(p=>`<option value="${p.id}" ${suggestedProject===p.id?'selected':''}>${p.name}</option>`).join('')}
+            </select>
+          </div>
           <button class="btn small" id="confirmAddBtn">Agregar a la bitácora de hoy</button>
         </div>`;
       $('#confirmAddBtn').onclick = async ()=>{
         const wid = $('#exWorker').value;
         const workerName = wid ? state.workers.find(x=>x.id===wid)?.name : '';
-        state.log.activities.push({ time: $('#exHora').value, text: $('#exActividad').value, workerId: wid||null, workerName });
+        const pid = $('#exProject').value;
+        const projectName = pid ? state.projects.find(x=>x.id===pid)?.name : '';
+        state.log.activities.push({ time: $('#exHora').value, text: $('#exActividad').value, workerId: wid||null, workerName, projectId: pid||null, projectName });
         state.log.activities.sort((a,b)=>a.time.localeCompare(b.time));
         await saveLog();
         $('#transcript').value=''; $('#extractResult').innerHTML='';
@@ -708,19 +811,29 @@ Responde SOLO con JSON, sin texto adicional, sin backticks, con este formato exa
 }
 
 /* ---------------- RENDER: REPORTE ---------------- */
-function buildReportText(){
+function buildReportText(projectId){
   const d = new Date(state.date+'T00:00:00');
   const fecha = `${d.getDate()} de ${['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'][d.getMonth()]} ${d.getFullYear()}`;
-  let t = `*📋 Reporte de obra – ${DIAS[d.getDay()]} ${fecha}*\n\n`;
+  const projLabel = projectId ? (state.projects.find(p=>p.id===projectId)?.name || '') : null;
+  let t = `*📋 Reporte de obra – ${DIAS[d.getDay()]} ${fecha}*`;
+  if(projLabel) t += `\n*Proyecto: ${projLabel}*`;
+  t += `\n\n`;
+
+  const relevantWorkers = state.workers.filter(w=>{
+    if(!projectId) return true;
+    const l = state.log.workers[w.id] || {};
+    return l.projectId === projectId;
+  });
 
   t += `*Asistencia:*\n`;
-  if(state.workers.length===0) t += `_Sin personal registrado_\n`;
-  state.workers.forEach(w=>{
+  if(relevantWorkers.length===0) t += `_Sin personal ${projectId?'asignado a este proyecto':'registrado'}_\n`;
+  relevantWorkers.forEach(w=>{
     const l = state.log.workers[w.id] || {};
     const ot = totalOvertime(l);
     if(l.present){
       let line = `✅ ${w.name}`;
       if(l.entrada || l.salida) line += ` — ${l.entrada||'--:--'} a ${l.salida||'--:--'}`;
+      if(l.salidaReal) line += ` (salió ${l.salidaReal})`;
       if(l.tookLunch === false) line += ` _(sin almuerzo)_`;
       if(ot>0) line += ` *(+${ot}h extra)*`;
       t += line + `\n`;
@@ -729,31 +842,64 @@ function buildReportText(){
     }
   });
 
+  const relevantActs = state.log.activities.filter(a=> !projectId || a.projectId===projectId);
   t += `\n*Actividades del día:*\n`;
-  if(state.log.activities.length===0) t += `_Sin actividades registradas_\n`;
-  state.log.activities.forEach(a=>{
-    t += `• ${a.time} — ${a.text}${a.workerName?` _(${a.workerName})_`:''}\n`;
+  if(relevantActs.length===0) t += `_Sin actividades registradas_\n`;
+  relevantActs.forEach(a=>{
+    let line = `• ${a.time} — ${a.text}`;
+    const tag = [a.workerName, !projectId ? a.projectName : null].filter(Boolean).join(' · ');
+    if(tag) line += ` _(${tag})_`;
+    t += line + `\n`;
   });
 
-  const totalOT = state.workers.reduce((s,w)=>{
-    const l = state.log.workers[w.id]||{};
-    return s + totalOvertime(l);
-  },0);
-  t += `\n*Total horas extra del día:* ${totalOT.toFixed(2)}h`;
+  if(projectId){
+    const totalOT = relevantWorkers.reduce((s,w)=> s + totalOvertime(state.log.workers[w.id]||{}), 0);
+    t += `\n*Total horas extra del proyecto:* ${totalOT.toFixed(2)}h`;
+  } else {
+    // Desglose de horas extra por proyecto + total general
+    const byProject = {};
+    state.workers.forEach(w=>{
+      const l = state.log.workers[w.id]||{};
+      const ot = totalOvertime(l);
+      if(ot<=0) return;
+      const key = l.projectId || '_sin';
+      byProject[key] = (byProject[key]||0) + ot;
+    });
+    const keys = Object.keys(byProject);
+    if(keys.length){
+      t += `\n*Horas extra por proyecto:*\n`;
+      keys.forEach(key=>{
+        const name = key==='_sin' ? 'Sin proyecto asignado' : (state.projects.find(p=>p.id===key)?.name || 'Proyecto eliminado');
+        t += `• ${name}: ${byProject[key].toFixed(2)}h\n`;
+      });
+    }
+    const totalOT = Object.values(byProject).reduce((a,b)=>a+b,0);
+    t += `\n*Total horas extra del día:* ${totalOT.toFixed(2)}h`;
+  }
   return t;
 }
 function renderReporte(){
-  const text = buildReportText();
+  const projectId = $('#reportProject')?.value || '';
+  const text = buildReportText(projectId);
   $('#app').innerHTML = `
   <div class="card">
-    <h3>Reporte del día (formato WhatsApp)</h3>
+    <h3>Reporte (formato WhatsApp)</h3>
+    <div class="field">
+      <label>Filtrar por proyecto</label>
+      <select id="reportProject">
+        <option value="">Todos los proyectos</option>
+        ${state.projects.map(p=>`<option value="${p.id}" ${projectId===p.id?'selected':''}>${p.name}</option>`).join('')}
+      </select>
+    </div>
     <pre class="report">${text}</pre>
     <div class="row">
       <button class="btn" id="copyBtn">Copiar reporte</button>
     </div>
   </div>`;
+  $('#reportProject').onchange = renderReporte;
   $('#copyBtn').onclick = ()=>{
-    navigator.clipboard.writeText(text).then(()=>toast('Reporte copiado')).catch(()=>toast('No se pudo copiar'));
+    const t = buildReportText($('#reportProject').value);
+    navigator.clipboard.writeText(t).then(()=>toast('Reporte copiado')).catch(()=>toast('No se pudo copiar'));
   };
 }
 
@@ -792,6 +938,7 @@ $('#datePicker').onchange = (e)=> goToDate(e.target.value);
 (async function init(){
   $('#datePicker').value = state.date;
   await loadWorkers();
+  await loadProjects();
   await loadLog(state.date);
   render();
 })();
