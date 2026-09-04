@@ -274,14 +274,14 @@ async function loadRange(){
     let hSum=0, eSum=0;
     if(log){
       Object.entries(log.workers||{}).forEach(([wid,l])=>{
-        if(!perWorker[wid]) perWorker[wid] = {name:'(eliminado)', presentDays:0, absentDays:0, horas:0, extra:0};
+        const h = l.present ? workedHours(l.entrada,l.salida) : 0;
+        const e = l.present ? totalOvertime(l) : 0;
+        hSum += h; eSum += e;
+        if(!perWorker[wid]) return; // trabajador ya eliminado de la planilla: no se muestra en la tabla
         if(l.present){
           perWorker[wid].presentDays++;
-          const h = workedHours(l.entrada,l.salida);
-          const e = totalOvertime(l);
           perWorker[wid].horas += h;
           perWorker[wid].extra += e;
-          hSum += h; eSum += e;
         } else {
           perWorker[wid].absentDays++;
         }
@@ -302,8 +302,8 @@ async function loadRange(){
       <td>${w.extra.toFixed(1)}h</td>
     </tr>`).join('');
 
-  const totalHoras = Object.values(perWorker).reduce((s,w)=>s+w.horas,0);
-  const totalExtra = Object.values(perWorker).reduce((s,w)=>s+w.extra,0);
+  const totalHoras = dayHoras.reduce((a,b)=>a+b,0);
+  const totalExtra = dayExtra.reduce((a,b)=>a+b,0);
 
   $('#rangeResult').innerHTML = `
     <div class="summary3">
