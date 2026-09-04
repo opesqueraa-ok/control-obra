@@ -325,7 +325,7 @@ function renderHoy(){
   <div class="card">
     <h3>Acciones rápidas</h3>
     <div class="row">
-      <button class="btn" id="btnNormal">Horario normal a todos (7:00–17:00)</button>
+      <button class="btn" id="btnNormal">Horario normal a todos (7:00–16:00)</button>
       <button class="btn ghost" id="btnBulkOpen">Aplicar hora a todos...</button>
     </div>
     <div id="bulkPanel" style="display:none; margin-top:10px;">
@@ -412,7 +412,7 @@ function renderHoy(){
   $('#btnNormal').onclick = async ()=>{
     state.workers.forEach(x=>{
       const l = state.log.workers[x.id];
-      if(l && l.present){ l.entrada='07:00'; l.salida='17:00'; }
+      if(l && l.present){ l.entrada='07:00'; l.salida='16:00'; }
     });
     await saveLog(); renderHoy(); setHeaderSub(); toast('Horario normal aplicado');
   };
