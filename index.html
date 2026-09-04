@@ -138,7 +138,6 @@
   <button data-tab="hoy" class="active"><span class="ic">📋</span>Hoy</button>
   <button data-tab="trabajadores"><span class="ic">👷</span>Personal</button>
   <button data-tab="semana"><span class="ic">📊</span>Semana</button>
-  <button data-tab="audio"><span class="ic">🎙️</span>Audio</button>
   <button data-tab="reporte"><span class="ic">📝</span>Reporte</button>
 </div>
 
@@ -660,156 +659,6 @@ async function renderSemana(){
     </div>`;
 }
 
-/* ---------------- RENDER: AUDIO ---------------- */
-let recognizer = null, isRecording = false;
-function renderAudio(){
-  const supported = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-  $('#app').innerHTML = `
-  <div class="card">
-    <h3>Registrar por audio</h3>
-    ${supported ? `
-    <p class="empty" style="margin-top:-4px;">Graba una nota de voz rápida (ej: "a las 9 y media Don Mario terminó el cielo falso del nivel 3"). Se transcribe y se extraen los datos para que solo los revises.</p>
-    <div class="row" style="margin:10px 0;">
-      <button class="btn" id="recBtn">🎙️ Grabar</button>
-      <span id="recStatus" style="font-size:13px; color:var(--muted);"></span>
-    </div>
-    <div class="field">
-      <label>Transcripción</label>
-      <textarea id="transcript" placeholder="Aquí aparecerá el texto reconocido..."></textarea>
-    </div>
-    <button class="btn secondary" id="extractBtn">Extraer datos con IA</button>
-    <div id="extractResult"></div>
-    ` : `<p class="empty">Este navegador no soporta reconocimiento de voz en tiempo real (funciona mejor en Chrome/Android). Puedes escribir la nota manualmente abajo.</p>
-    <div class="field"><label>Nota</label><textarea id="transcript"></textarea></div>
-    <button class="btn secondary" id="extractBtn">Extraer datos con IA</button>
-    <div id="extractResult"></div>`}
-  </div>`;
-
-  if(supported){
-    // iOS Safari tiene un bug conocido con continuous:true (el micrófono nunca
-    // entrega el resultado final). Por eso usamos sesiones cortas que se
-    // reinician solas mientras el usuario sigue grabando ("chaining").
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let finalText = '';
-    let stoppedByUser = false;
-
-    function startSession(){
-      recognizer = new SR();
-      recognizer.lang = 'es-GT';
-      recognizer.continuous = false;   // clave para que funcione en iOS
-      recognizer.interimResults = true;
-
-      recognizer.onresult = (e)=>{
-        let interim = '';
-        for(let i=e.resultIndex;i<e.results.length;i++){
-          if(e.results[i].isFinal) finalText += e.results[i][0].transcript + ' ';
-          else interim += e.results[i][0].transcript;
-        }
-        $('#transcript').value = (finalText + interim).trim();
-      };
-
-      recognizer.onerror = (e)=>{
-        // "no-speech" es normal (silencio breve entre frases); no detenemos por eso.
-        if(e.error !== 'no-speech'){
-          stoppedByUser = true;
-          isRecording = false;
-          $('#recBtn').innerHTML = '🎙️ Grabar';
-          $('#recStatus').textContent = 'Error de micrófono: ' + e.error;
-        }
-      };
-
-      recognizer.onend = ()=>{
-        if(!stoppedByUser && isRecording){
-          // la sesión cortó sola (típico en iOS a los ~60s o tras una pausa):
-          // reiniciamos automáticamente para que se sienta como grabación continua.
-          startSession();
-        } else {
-          isRecording = false;
-          $('#recBtn').innerHTML = '🎙️ Grabar';
-          $('#recStatus').innerHTML = '';
-        }
-      };
-
-      recognizer.start();
-    }
-
-    $('#recBtn').onclick = ()=>{
-      if(isRecording){
-        stoppedByUser = true;
-        recognizer.stop();
-        return;
-      }
-      stoppedByUser = false;
-      finalText = $('#transcript').value ? $('#transcript').value.trim() + ' ' : '';
-      isRecording = true;
-      $('#recBtn').innerHTML = '⏹️ Detener';
-      $('#recStatus').innerHTML = '<span id="recDot"></span>Escuchando...';
-      startSession();
-    };
-  }
-
-  $('#extractBtn').onclick = async ()=>{
-    const text = $('#transcript').value.trim();
-    if(!text){ toast('No hay texto para procesar'); return; }
-    $('#extractResult').innerHTML = '<p class="empty">Procesando...</p>';
-    try{
-      const workerNames = state.workers.map(w=>w.name).join(', ') || 'ninguno registrado aún';
-      const resp = await fetch('https://api.anthropic.com/v1/messages', {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({
-          model:'claude-sonnet-4-6',
-          max_tokens:1000,
-          messages:[{role:'user', content:
-            `Extrae de esta nota de voz de supervisión de obra: actividad realizada/supervisada, hora mencionada (formato HH:MM 24h, si no se menciona usa null), y el nombre del trabajador si se menciona (compáralo con esta lista de trabajadores: ${workerNames}; si no coincide con ninguno, usa null).
-Nota: "${text}"
-Responde SOLO con JSON, sin texto adicional, sin backticks, con este formato exacto:
-{"actividad":"...", "hora":"HH:MM o null", "trabajador":"nombre exacto de la lista o null"}`
-          }]
-        })
-      });
-      const data = await resp.json();
-      const raw = data.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim();
-      const parsed = JSON.parse(raw);
-      const matchedWorker = state.workers.find(w=>w.name===parsed.trabajador);
-      const suggestedProject = matchedWorker ? state.log.workers[matchedWorker.id]?.projectId : '';
-      $('#extractResult').innerHTML = `
-        <div class="card" style="background:#FAFAF7; margin-top:10px;">
-          <div class="field"><label>Actividad</label><input type="text" id="exActividad" value="${(parsed.actividad||'').replace(/"/g,'&quot;')}"></div>
-          <div class="row">
-            <div class="field" style="flex:1;"><label>Hora</label><input type="time" id="exHora" value="${parsed.hora && parsed.hora!=='null' ? parsed.hora : nowHM()}"></div>
-            <div class="field" style="flex:1;"><label>Trabajador</label>
-              <select id="exWorker">
-                <option value="">General / supervisión</option>
-                ${state.workers.map(w=>`<option value="${w.id}" ${matchedWorker&&matchedWorker.id===w.id?'selected':''}>${w.name}</option>`).join('')}
-              </select>
-            </div>
-          </div>
-          <div class="field"><label>Proyecto</label>
-            <select id="exProject">
-              <option value="">Sin proyecto</option>
-              ${state.projects.map(p=>`<option value="${p.id}" ${suggestedProject===p.id?'selected':''}>${p.name}</option>`).join('')}
-            </select>
-          </div>
-          <button class="btn small" id="confirmAddBtn">Agregar a la bitácora de hoy</button>
-        </div>`;
-      $('#confirmAddBtn').onclick = async ()=>{
-        const wid = $('#exWorker').value;
-        const workerName = wid ? state.workers.find(x=>x.id===wid)?.name : '';
-        const pid = $('#exProject').value;
-        const projectName = pid ? state.projects.find(x=>x.id===pid)?.name : '';
-        state.log.activities.push({ time: $('#exHora').value, text: $('#exActividad').value, workerId: wid||null, workerName, projectId: pid||null, projectName });
-        state.log.activities.sort((a,b)=>a.time.localeCompare(b.time));
-        await saveLog();
-        $('#transcript').value=''; $('#extractResult').innerHTML='';
-        toast('Agregado a la bitácora de hoy');
-      };
-    }catch(e){
-      $('#extractResult').innerHTML = '<p class="empty">No se pudo procesar el audio. Intenta de nuevo o agrégalo manualmente en la pestaña Hoy.</p>';
-    }
-  };
-}
-
 /* ---------------- RENDER: REPORTE ---------------- */
 function buildReportText(projectId){
   const d = new Date(state.date+'T00:00:00');
@@ -909,7 +758,6 @@ function render(){
   if(state.tab==='hoy') renderHoy();
   else if(state.tab==='trabajadores') renderTrabajadores();
   else if(state.tab==='semana') renderSemana();
-  else if(state.tab==='audio') renderAudio();
   else if(state.tab==='reporte') renderReporte();
 }
 $$('.tabbar button').forEach(b=>{
